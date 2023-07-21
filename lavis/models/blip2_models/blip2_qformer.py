@@ -496,6 +496,61 @@ class Blip2Qformer(Blip2Base):
             text_embeds_proj=text_features,
             multimodal_embeds=multimodal_embeds,
         )
+    
+    def extract_features_diff(self, samples, query_tokens):
+        """
+        Extract features for image samples with differential query
+        """
+        image = samples.get("image")
+
+        # initalize output
+        # image_embeds, text_embeds, multimodal_embeds = None, None, None
+        # image_features, text_features = None, None
+
+        # return multimodel query features
+        with torch.no_grad():
+            with self.maybe_autocast():
+                image_embeds_frozen = self.ln_vision(self.visual_encoder(image))
+        image_embeds_frozen = image_embeds_frozen.float()
+        image_atts = torch.ones(
+            image_embeds_frozen.size()[:-1], dtype=torch.long
+        ).to(self.device)
+        query_tokens = query_tokens.expand(
+            image_embeds_frozen.shape[0], -1, -1
+        )
+        # query_atts = torch.ones(query_tokens.size()[:-1], dtype=torch.long).to(
+        #     self.device
+        # )
+
+        # attention_mask = torch.cat([query_atts, text.attention_mask], dim=1)
+
+        query_output = self.Qformer.bert(
+            query_embeds=query_tokens,
+            encoder_hidden_states=image_embeds_frozen,
+            encoder_attention_mask=image_atts,
+            return_dict=True,
+        )
+        image_embeds = query_output.last_hidden_state
+        image_features = F.normalize(self.vision_proj(image_embeds), dim=-1)
+        return image_features
+        # output = self.Qformer.bert(
+        #     text.input_ids,
+        #     query_embeds=query_tokens,
+        #     attention_mask=attention_mask,
+        #     encoder_hidden_states=image_embeds_frozen,
+        #     encoder_attention_mask=image_atts,
+        #     return_dict=True,
+        # )
+
+        # multimodal_embeds = output.last_hidden_state[:, : query_tokens.size(1), :]
+
+        # return BlipOutputFeatures(
+        #     image_embeds=image_embeds,
+        #     image_embeds_proj=image_features,
+        #     text_embeds=text_embeds,
+        #     text_embeds_proj=text_features,
+        #     multimodal_embeds=multimodal_embeds,
+        # )
 
     @classmethod
     def from_config(cls, cfg):
