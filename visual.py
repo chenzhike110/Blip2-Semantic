@@ -1,10 +1,12 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="2,3"
+os.environ["CUDA_VISIBLE_DEVICES"]="3"
 import torch
 import numpy as np
 from tqdm import tqdm
 from PIL import Image
 from lavis.models import load_model_and_preprocess
+# import matplotlib
+# matplotlib.use('TKAgg')
 import hypertools as hyp
 import matplotlib.pyplot as plt
 
@@ -24,9 +26,9 @@ features_image_new = None
 characterlabels = None
 motionlabels = None
 
-query = torch.load("/data2/czk/LAVIS/saved/query_6_1.814610242843628.pt", map_location=torch.device('cpu')).to(device)
+query = torch.load("./LAVIS/saved/query_9_1.7022453546524048.pt", map_location=torch.device('cpu')).to(device)
 
-for i in tqdm(range(len(motions)//30)):
+for i in tqdm(range(len(motions))):
     raw_image = np.load(os.path.join(datapath, motions[i]))
     for index in range(raw_image.shape[1]):
         images = []
@@ -62,12 +64,18 @@ for i in tqdm(range(len(motions)//30)):
             else:
                 motionlabels = torch.cat((motionlabels, torch.ones(raw_image.shape[0])*i), 0)
 
-features_image_origin = features_image_origin.long().view(features_image_origin.shape[0], -1).numpy()
-features_image_new = features_image_new.long().view(features_image_new.shape[0], -1).numpy()
+features_image_origin = features_image_origin.view(features_image_origin.shape[0], -1).numpy()
+features_image_new = features_image_new.view(features_image_new.shape[0], -1).numpy()
 characterlabels = characterlabels.long().numpy()
 motionlabels = motionlabels.long().numpy()
 
-hyp.plot(features_image_origin, '.', reduce='TSNE', hue=characterlabels, ndims=2)
-plt.savefig("origin_character.png")
-hyp.plot(features_image_origin, '.', reduce='TSNE', hue=motionlabels, ndims=2)
-plt.savefig("origin_character.png")    
+np.save("./LAVIS/features_image_origin.npy", features_image_origin)
+np.save("./LAVIS/features_image_new.npy", features_image_new)
+np.save("./LAVIS/characterlabels.npy", characterlabels)
+np.save("./LAVIS/motionlabels.npy", motionlabels)
+
+hyp.plot(features_image_origin, '.', reduce='TSNE', hue=characterlabels, ndims=2, save_path="./LAVIS/origin_character.png", show=False)
+hyp.plot(features_image_origin, '.', reduce='TSNE', hue=motionlabels, ndims=2, save_path="./LAVIS/origin_motion.png", show=False)
+hyp.plot(features_image_new, '.', reduce='TSNE', hue=characterlabels, ndims=2, save_path="./LAVIS/new_character.png", show=False)
+hyp.plot(features_image_new, '.', reduce='TSNE', hue=motionlabels, ndims=2, save_path="./LAVIS/new_motion.png", show=False)
+# hyp.plot(features_image_origin, '.', reduce='TSNE', hue=motionlabels, ndims=2)

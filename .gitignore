@@ -157,3 +157,5 @@ cache/
 
 saved
 runs
+*.npy
+events.*

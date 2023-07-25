@@ -18,7 +18,7 @@ from lavis.common.registry import registry
 from lavis.models.blip2_models.blip2 import Blip2Base, disabled_train
 from lavis.models.blip2_models.modeling_t5 import T5Config, T5ForConditionalGeneration
 from transformers.modeling_outputs import BaseModelOutput
-
+from accelerate import init_empty_weights
 
 @registry.register_model("blip2_t5_instruct")
 class Blip2T5Instruct(Blip2Base):
@@ -161,7 +161,7 @@ class Blip2T5Instruct(Blip2Base):
         if self.few_shot_prob > 0 and "few_shot_samples" in samples.keys():
             fs_embeds, fs_atts = self.prepare_few_shot_embeds(samples['few_shot_samples'])
 
-        with self.maybe_autocast(dtype=torch.bfloat16):
+        with self.maybe_autocast(dtype=torch.float32):
             input_tokens = self.t5_tokenizer(
                 samples["text_input"],
                 padding="longest",
@@ -256,7 +256,7 @@ class Blip2T5Instruct(Blip2Base):
         inputs_t5 = self.t5_proj(query_output.last_hidden_state[:,:query_tokens.size(1),:])
         atts_t5 = torch.ones(inputs_t5.size()[:-1], dtype=torch.long).to(image.device)
 
-        with self.maybe_autocast(dtype=torch.bfloat16):
+        with self.maybe_autocast(dtype=torch.float32):
             input_tokens = self.t5_tokenizer(
                 text_input,
                 padding="longest",
@@ -389,7 +389,7 @@ class Blip2T5Instruct(Blip2Base):
 
         encoder_atts = torch.cat([atts_t5, input_tokens.attention_mask], dim=1)
 
-        with self.maybe_autocast(dtype=torch.bfloat16):
+        with self.maybe_autocast(dtype=torch.float32):
             inputs_embeds = self.t5_model.encoder.embed_tokens(input_tokens.input_ids)
             inputs_embeds = torch.cat([inputs_t5, inputs_embeds], dim=1)
 
@@ -625,7 +625,7 @@ class Blip2T5Instruct(Blip2Base):
 
         n_cands = len(candidates)
 
-        with self.maybe_autocast(dtype=torch.bfloat16):
+        with self.maybe_autocast(dtype=torch.float32):
             inputs_embeds = self.t5_model.encoder.embed_tokens(input_tokens.input_ids)
             inputs_embeds = torch.cat([inputs_t5, inputs_embeds], dim=1)
 
@@ -755,6 +755,7 @@ class Blip2T5Instruct(Blip2Base):
 
         qformer_text_input = cfg.get("qformer_text_input", True)
 
+        # with init_empty_weights():
         model = cls(
             vit_model=vit_model,
             img_size=img_size,
