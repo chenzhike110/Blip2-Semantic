@@ -88,17 +88,17 @@ class Blip2Base(BaseModel):
             cached_file = download_cached_file(
                 url_or_filename, check_hash=False, progress=True
             )
-            # checkpoint = torch.load(cached_file, map_location="cpu")
-            load_checkpoint_and_dispatch(self, checkpoint=cached_file, device_map="auto", no_split_module_classes=['Block'])
+            checkpoint = torch.load(cached_file, map_location="cpu")
+            # load_checkpoint_and_dispatch(self, checkpoint=cached_file, device_map="auto", no_split_module_classes=['Block'])
         elif os.path.isfile(url_or_filename):
-            # checkpoint = torch.load(url_or_filename, map_location="cpu")
-            load_checkpoint_and_dispatch(self, checkpoint=cached_file, device_map="auto", no_split_module_classes=['Block'])
+            checkpoint = torch.load(url_or_filename, map_location="cpu")
+            # load_checkpoint_and_dispatch(self, checkpoint=cached_file, device_map="auto", no_split_module_classes=['Block'])
         else:
             raise RuntimeError("checkpoint url or path is invalid")
 
-        # state_dict = checkpoint["model"]
+        state_dict = checkpoint["model"]
 
-        # msg = self.load_state_dict(state_dict, strict=False)
+        msg = self.load_state_dict(state_dict, strict=False)
 
         # logging.info("Missing keys {}".format(msg.missing_keys))
         logging.info("load checkpoint from %s" % url_or_filename)

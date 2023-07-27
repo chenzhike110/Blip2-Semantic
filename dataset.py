@@ -3,6 +3,54 @@ import torch
 import numpy as np
 from torch.utils.data import Dataset
 
+class MaximoDataset(Dataset):
+    """
+    Maximo video dataset
+    """
+    def __init__(self, path, preprocess, batch_size, train_mask = ["YBot", "XBot"]) -> None:
+        super().__init__()
+        self.path = path
+        self.datalist = []
+        self.batch_size = batch_size
+        self.train_mask = train_mask
+        self.preprocess = preprocess
+        self.reset()
+
+    def reset(self):
+        self.size = 0
+        self.current_index = 0
+        for file in os.listdir(self.path):
+            if file.endswith(".npy"):
+                self.datalist.append(os.path.join(self.path, file))
+                self.size = max(self.size, int(file.split("_")[1].strip(".npy")))
+        with open(os.path.join(self.path, "labels.txt")) as f:
+            self.labels = f.readlines()
+        self.datalist.sort(key=lambda x: int(x.split("_")[1].strip(".npy")))
+        self.data = np.load(self.datalist[0])
+    
+    def __len__(self):
+        return  self.size // self.batch_size
+    
+    def __getitem__(self, index):
+        images = []
+        for i in range(index*self.batch_size, (index+1)*self.batch_size):
+            if i >= int(self.datalist[0].split("_")[1].strip(".npy")):
+                self.current_index += self.data.shape[0]
+                self.data = np.load(self.datalist[1])
+                self.datalist = self.datalist[1:]
+            images.append(self.preprocess(self.data[i-self.current_index]))
+        images = torch.stack(images, dim=0).squeeze()
+        mask_ = [label.split("/")[0] in self.train_mask for label in self.labels[index*self.batch_size:(index+1)*self.batch_size]]
+        labels = [os.path.join(*label.split("/")[1:]) for label in self.labels[index*self.batch_size:(index+1)*self.batch_size]]
+        label_unque = set(labels)
+        label_n = torch.zeros(len(labels)).to(images.device)
+        labels = np.array(labels)
+        for index, label in enumerate(label_unque):
+            mask = torch.tensor(labels == label).view_as(label_n)
+            label_n[mask] = index
+
+        return {"image":images, "label":label_n.long(), "mask": torch.tensor(mask_)}
+
 class PromptDataset(Dataset):
     """
     Maximo video dataset with prompt

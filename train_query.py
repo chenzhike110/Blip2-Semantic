@@ -36,6 +36,7 @@ for loop in range(100):
     for i in tqdm(range(len(motions))):
         raw_image = np.load(os.path.join(datapath, motions[i]))
         for index in range(raw_image.shape[1]):
+            optimizer.zero_grad()
             images = []
             for j in range(raw_image.shape[0]):
                 arr2im = Image.fromarray(raw_image[j, index, ...])

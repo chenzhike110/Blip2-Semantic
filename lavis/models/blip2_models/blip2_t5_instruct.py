@@ -86,22 +86,22 @@ class Blip2T5Instruct(Blip2Base):
             self.Qformer.resize_token_embeddings(len(self.tokenizer))
         self.Qformer.cls = None
 
-        self.t5_tokenizer = T5TokenizerFast.from_pretrained(t5_model, truncation_side='left')
-        self.t5_output_tokenizer = T5TokenizerFast.from_pretrained(t5_model, truncation_side='right')
+        # self.t5_tokenizer = T5TokenizerFast.from_pretrained(t5_model, truncation_side='left')
+        # self.t5_output_tokenizer = T5TokenizerFast.from_pretrained(t5_model, truncation_side='right')
 
-        t5_config = T5Config.from_pretrained(t5_model)
-        t5_config.dense_act_fn = "gelu"
-        self.t5_model = T5ForConditionalGeneration.from_pretrained(
-            t5_model, config=t5_config
-        )
+        # t5_config = T5Config.from_pretrained(t5_model)
+        # t5_config.dense_act_fn = "gelu"
+        # self.t5_model = T5ForConditionalGeneration.from_pretrained(
+        #     t5_model, config=t5_config
+        # )
 
-        for name, param in self.t5_model.named_parameters():
-            param.requires_grad = False
-            param.data = param.data.bfloat16()
+        # for name, param in self.t5_model.named_parameters():
+        #     param.requires_grad = False
+        #     param.data = param.data.bfloat16()
 
-        self.t5_proj = nn.Linear(
-            self.Qformer.config.hidden_size, self.t5_model.config.hidden_size
-        )
+        # self.t5_proj = nn.Linear(
+        #     self.Qformer.config.hidden_size, self.t5_model.config.hidden_size
+        # )
 
         self.max_txt_len = max_txt_len
         self.max_output_txt_len = max_output_txt_len
@@ -115,7 +115,33 @@ class Blip2T5Instruct(Blip2Base):
 
         self.qformer_text_input = qformer_text_input
 
-    def forward(self, samples):
+    def forward(self, samples, query_tokens):
+        """
+        Extract features for image samples with differential query
+        """
+        image = samples.get("image")
+        with torch.no_grad():
+            with self.maybe_autocast():
+                image_embeds_frozen = self.ln_vision(self.visual_encoder(image))
+        image_embeds_frozen = image_embeds_frozen.float()
+        image_atts = torch.ones(
+            image_embeds_frozen.size()[:-1], dtype=torch.long
+        ).to(self.device)
+        query_tokens = query_tokens.expand(
+            image_embeds_frozen.shape[0], -1, -1
+        )
+
+        query_output = self.Qformer.bert(
+            query_embeds=query_tokens,
+            encoder_hidden_states=image_embeds_frozen,
+            encoder_attention_mask=image_atts,
+            return_dict=True,
+        )
+        multimodal_embeds = query_output.last_hidden_state[:, : self.query_tokens.size(1), :]
+        # multimodal_embeds = F.normalize(multimodal_embeds, dim=-1)
+        return multimodal_embeds
+
+    def forward_loss(self, samples):
         # print('-----------------')
         # print(samples["text_input"])
         # print(samples["text_output"])
