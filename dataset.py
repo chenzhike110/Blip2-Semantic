@@ -1,19 +1,26 @@
 import os
 import torch
+import random
 import numpy as np
 from torch.utils.data import Dataset
+
+def find_indices(list_to_check, item_to_find):
+    array = np.array(list_to_check)
+    indices = np.where(array == item_to_find)[0]
+    return list(indices)
 
 class MaximoDataset(Dataset):
     """
     Maximo video dataset
     """
-    def __init__(self, path, preprocess, batch_size, train_mask = ["YBot", "XBot"]) -> None:
+    def __init__(self, path, preprocess, batch_size, train_mask = ["YBot", "XBot"], shuffle=True) -> None:
         super().__init__()
         self.path = path
         self.datalist = []
         self.batch_size = batch_size
         self.train_mask = train_mask
         self.preprocess = preprocess
+        self._shuffle = shuffle
         self.reset()
 
     def reset(self):
@@ -22,11 +29,25 @@ class MaximoDataset(Dataset):
         for file in os.listdir(self.path):
             if file.endswith(".npy"):
                 self.datalist.append(os.path.join(self.path, file))
-                self.size = max(self.size, int(file.split("_")[1].strip(".npy")))
+                self.size = max(self.size, int(file.split("_")[-1].strip(".npy")))
         with open(os.path.join(self.path, "labels.txt")) as f:
             self.labels = f.readlines()
-        self.datalist.sort(key=lambda x: int(x.split("_")[1].strip(".npy")))
+        self.datalist.sort(key=lambda x: int(x.split("_")[-1].strip(".npy")))
         self.data = np.load(self.datalist[0])
+        if self._shuffle:
+            self.shuffle()
+
+    def shuffle(self):
+        motion_label = [os.path.join(*label.split("/")[1:]) for label in self.labels[self.current_index:self.current_index+self.data.shape[0]]]
+        label_unique = list(set(motion_label))
+        random.shuffle(label_unique)
+        indexes = []
+        for label in label_unique:
+            index = find_indices(motion_label, label)
+            indexes += index
+        assert len(indexes) == self.data.shape[0]
+        self.data = self.data[indexes]
+        self.labels[self.current_index:self.current_index+self.data.shape[0]] = list(np.array(self.labels[self.current_index:self.current_index+self.data.shape[0]])[indexes])
     
     def __len__(self):
         return  self.size // self.batch_size
@@ -34,10 +55,12 @@ class MaximoDataset(Dataset):
     def __getitem__(self, index):
         images = []
         for i in range(index*self.batch_size, (index+1)*self.batch_size):
-            if i >= int(self.datalist[0].split("_")[1].strip(".npy")):
+            if i >= int(self.datalist[0].split("_")[-1].strip(".npy")):
                 self.current_index += self.data.shape[0]
                 self.data = np.load(self.datalist[1])
                 self.datalist = self.datalist[1:]
+                if self._shuffle:
+                    self.shuffle()
             images.append(self.preprocess(self.data[i-self.current_index]))
         images = torch.stack(images, dim=0).squeeze()
         mask_ = [label.split("/")[0] in self.train_mask for label in self.labels[index*self.batch_size:(index+1)*self.batch_size]]
