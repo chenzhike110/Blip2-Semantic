@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 from torch.cuda.amp import autocast as autocast
 from transformers import T5TokenizerFast
-
+from transformers import BertGenerationDecoder
 from lavis.common.registry import registry
 from lavis.models.blip2_models.blip2 import Blip2Base, disabled_train
 from lavis.models.blip2_models.modeling_t5 import T5Config, T5ForConditionalGeneration
@@ -59,9 +59,11 @@ class Blip2T5Instruct(Blip2Base):
         apply_lemmatizer: when set to True, postprocess predict_answers() result with lemmas.
         """
         super().__init__()
-
+        self.text_decoder = BertGenerationDecoder.from_pretrained(
+            "bert-base-uncased", is_decoder=True, bos_token_id=101, eos_token_id=102
+        )
         self.tokenizer = self.init_tokenizer(truncation_side="left")
-
+        # print(self.tokenizer.bos_token_id, self.tokenizer.eos_token_id, self.tokenizer.pad_token_id)
         self.visual_encoder, self.ln_vision = self.init_vision_encoder(
             vit_model, img_size, drop_path_rate, use_grad_checkpoint, vit_precision
         )
@@ -86,22 +88,23 @@ class Blip2T5Instruct(Blip2Base):
             self.Qformer.resize_token_embeddings(len(self.tokenizer))
         self.Qformer.cls = None
 
-        # self.t5_tokenizer = T5TokenizerFast.from_pretrained(t5_model, truncation_side='left')
-        # self.t5_output_tokenizer = T5TokenizerFast.from_pretrained(t5_model, truncation_side='right')
+        self.t5_tokenizer = T5TokenizerFast.from_pretrained(t5_model, truncation_side='left')
+        # print(self.t5_tokenizer.bos_token_id, self.t5_tokenizer.eos_token_id, self.t5_tokenizer.pad_token_id)
+        self.t5_output_tokenizer = T5TokenizerFast.from_pretrained(t5_model, truncation_side='right')
 
-        # t5_config = T5Config.from_pretrained(t5_model)
-        # t5_config.dense_act_fn = "gelu"
-        # self.t5_model = T5ForConditionalGeneration.from_pretrained(
-        #     t5_model, config=t5_config
-        # )
+        t5_config = T5Config.from_pretrained(t5_model)
+        t5_config.dense_act_fn = "gelu"
+        self.t5_model = T5ForConditionalGeneration.from_pretrained(
+            t5_model, config=t5_config
+        )
 
-        # for name, param in self.t5_model.named_parameters():
-        #     param.requires_grad = False
-        #     param.data = param.data.bfloat16()
+        for name, param in self.t5_model.named_parameters():
+            param.requires_grad = False
+            # param.data = param.data.bfloat16()
 
-        # self.t5_proj = nn.Linear(
-        #     self.Qformer.config.hidden_size, self.t5_model.config.hidden_size
-        # )
+        self.t5_proj = nn.Linear(
+            self.Qformer.config.hidden_size, t5_config.hidden_size
+        )
 
         self.max_txt_len = max_txt_len
         self.max_output_txt_len = max_output_txt_len
@@ -115,7 +118,7 @@ class Blip2T5Instruct(Blip2Base):
 
         self.qformer_text_input = qformer_text_input
 
-    def forward(self, samples, query_tokens):
+    def forward(self, samples, query_tokens, return_image=False):
         """
         Extract features for image samples with differential query
         """
@@ -124,6 +127,8 @@ class Blip2T5Instruct(Blip2Base):
             with self.maybe_autocast():
                 image_embeds_frozen = self.ln_vision(self.visual_encoder(image))
         image_embeds_frozen = image_embeds_frozen.float()
+        if return_image:
+            return image_embeds_frozen
         image_atts = torch.ones(
             image_embeds_frozen.size()[:-1], dtype=torch.long
         ).to(self.device)
@@ -137,9 +142,10 @@ class Blip2T5Instruct(Blip2Base):
             encoder_attention_mask=image_atts,
             return_dict=True,
         )
-        multimodal_embeds = query_output.last_hidden_state[:, : self.query_tokens.size(1), :]
+        # multimodal_embeds = query_output.last_hidden_state[:, : self.query_tokens.size(1), :]
+        inputs_t5 = self.t5_proj(query_output.last_hidden_state[:, : self.query_tokens.size(1), :])
         # multimodal_embeds = F.normalize(multimodal_embeds, dim=-1)
-        return multimodal_embeds
+        return inputs_t5
 
     def forward_loss(self, samples):
         # print('-----------------')
@@ -180,7 +186,7 @@ class Blip2T5Instruct(Blip2Base):
                 return_dict=True,
             )
 
-        inputs_t5 = self.t5_proj(query_output.last_hidden_state[:,:query_tokens.size(1),:])
+        inputs_t5 = self.t5_proj(query_output.last_hidden_state[:,:query_tokens.size(1),:]).to(self.t5_model.encoder.device)
         atts_t5 = torch.ones(inputs_t5.size()[:-1], dtype=torch.long).to(image.device)
 
         fs_embeds, fs_atts = None, None
@@ -195,19 +201,19 @@ class Blip2T5Instruct(Blip2Base):
                 max_length=self.max_txt_len,
                 return_tensors="pt",
             ).to(image.device)
-            output_tokens = self.t5_output_tokenizer(
-                samples["text_output"],
-                padding="longest",
-                truncation=True,
-                max_length=self.max_output_txt_len,
-                return_tensors="pt",
-            ).to(image.device)
+            # output_tokens = self.t5_output_tokenizer(
+            #     samples["text_output"],
+            #     padding="longest",
+            #     truncation=True,
+            #     max_length=self.max_output_txt_len,
+            #     return_tensors="pt",
+            # ).to(image.device)
 
             encoder_atts = torch.cat([atts_t5, input_tokens.attention_mask], dim=1)
 
-            targets = output_tokens.input_ids.masked_fill(
-                output_tokens.input_ids == self.t5_tokenizer.pad_token_id, -100
-            )
+            # targets = output_tokens.input_ids.masked_fill(
+            #     output_tokens.input_ids == self.t5_tokenizer.pad_token_id, -100
+            # )
 
             inputs_embeds = self.t5_model.encoder.embed_tokens(input_tokens.input_ids)
             inputs_embeds = torch.cat([inputs_t5, inputs_embeds], dim=1)
@@ -219,13 +225,11 @@ class Blip2T5Instruct(Blip2Base):
             outputs = self.t5_model(
                 inputs_embeds=inputs_embeds,
                 attention_mask=encoder_atts,
-                decoder_attention_mask=output_tokens.attention_mask,
-                return_dict=True,
-                labels=targets,
+                # decoder_attention_mask=output_tokens.attention_mask,
+                # return_dict=True,
+                # labels=targets,
             )
-            loss = outputs.loss
-
-            return {"loss": loss}
+            return outputs
 
     def prepare_few_shot_embeds(self, samples):
         this_n_fs = random.choices(

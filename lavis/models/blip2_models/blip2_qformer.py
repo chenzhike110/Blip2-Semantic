@@ -82,6 +82,7 @@ class Blip2Qformer(Blip2Base):
         self.text_proj = nn.Linear(self.Qformer.config.hidden_size, embed_dim)
 
         self.itm_head = nn.Linear(self.Qformer.config.hidden_size, 2)
+        self.motion_proj = nn.Linear(num_query_token, 1)
 
         self.temp = nn.Parameter(0.07 * torch.ones([]))
 
@@ -382,7 +383,7 @@ class Blip2Qformer(Blip2Base):
         itm_logit = self.itm_head(vl_embeddings)
         itm_logit = itm_logit[:, :, 1].mean(dim=1)
         return itm_logit
-
+    
     @torch.no_grad()
     def extract_features(self, samples, mode="multimodal"):
         """
@@ -497,7 +498,42 @@ class Blip2Qformer(Blip2Base):
             multimodal_embeds=multimodal_embeds,
         )
     
-    def forward(self, samples, query_tokens):
+    def extract_feature(self, samples, caption):
+        image = samples.get("image")
+        with self.maybe_autocast():
+            with torch.no_grad():
+                image_embeds_frozen = self.ln_vision(self.visual_encoder(image))
+            image_embeds_frozen = image_embeds_frozen.float()
+            image_atts = torch.ones(
+                image_embeds_frozen.size()[:-1], dtype=torch.long
+            ).to(self.device)
+            query_tokens = self.query_tokens.expand(
+                image_embeds_frozen.shape[0], -1, -1
+            )
+            query_atts = torch.ones(query_tokens.size()[:-1], dtype=torch.long).to(
+                self.device
+            )
+
+            text = self.tokenizer(caption, return_tensors="pt", padding=True).to(
+                self.device
+            )
+            attention_mask = torch.cat([query_atts, text.attention_mask], dim=1)
+
+            output = self.Qformer.bert(
+                text.input_ids,
+                query_embeds=query_tokens,
+                attention_mask=attention_mask,
+                encoder_hidden_states=image_embeds_frozen,
+                encoder_attention_mask=image_atts,
+                return_dict=True,
+            )
+
+            multimodal_embeds = output.last_hidden_state[:, : query_tokens.size(1), :]
+            # multimodal_embeds = self.motion_proj(multimodal_embeds.permute(0, 2, 1)).squeeze()
+            # multimodal_embeds = F.normalize(multimodal_embeds, dim=-1)
+        return multimodal_embeds
+    
+    def forward(self, samples, return_image=False):
         """
         Extract features for image samples with differential query
         """
@@ -512,10 +548,12 @@ class Blip2Qformer(Blip2Base):
             with self.maybe_autocast():
                 image_embeds_frozen = self.ln_vision(self.visual_encoder(image))
         image_embeds_frozen = image_embeds_frozen.float()
+        if return_image:
+            return image_embeds_frozen
         image_atts = torch.ones(
             image_embeds_frozen.size()[:-1], dtype=torch.long
         ).to(self.device)
-        query_tokens = query_tokens.expand(
+        query_tokens = self.query_tokens.expand(
             image_embeds_frozen.shape[0], -1, -1
         )
 

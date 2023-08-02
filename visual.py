@@ -1,81 +1,80 @@
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="3"
 import torch
+import shutil
+import argparse
 import numpy as np
 from tqdm import tqdm
 from PIL import Image
+from dataset import MaximoDataset
+import torchvision.transforms as transforms
 from lavis.models import load_model_and_preprocess
 # import matplotlib
 # matplotlib.use('TKAgg')
-import hypertools as hyp
-import matplotlib.pyplot as plt
+# import hypertools as hyp
+# import matplotlib.pyplot as plt
 
-# setup device to use
-device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
-# loads BLIP-2 pre-trained model
-model, vis_processors, text_processors = load_model_and_preprocess(name="blip2_feature_extractor", model_type="pretrain_vitL", is_eval=True, device=device)
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser("trainning text query arguments")
+    parser.add_argument('--datapath', default="/data2/czk/MVNet/dataset_all_merge/", type=str, help='Path to dataset file')
+    parser.add_argument('--model_name', default="blip2_feature_extractor", help="finetured model")
+    parser.add_argument('--batch_size', default=128, type=int, help='batch size for metrics learning')
+    parser.add_argument('--query_path', default=None, help="query pt")
+    args = parser.parse_args()
 
-datapath = "/data2/czk/MVNet/dataset/processed/"
-motions = []
-for motion in os.listdir(datapath):
-    if "_prompt" in motion:
-        continue
-    motions.append(motion)
-features_image_origin = None
-features_image_new = None
-characterlabels = None
-motionlabels = None
+    # setup device to use
+    device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
+    # loads BLIP-2 pre-trained model
+    if args.model_name == "blip2_feature_extractor":
+        model, vis_processors, text_processors = load_model_and_preprocess(
+            name="blip2_feature_extractor", model_type="pretrain_vitL", is_eval=True, device=device
+        )
+    else:
+        model, vis_processors, _ = load_model_and_preprocess(
+            name="blip2_t5_instruct", model_type="flant5xxl", is_eval=True, device=device
+        )
+    if args.query_path is not None:
+        checkpoint = torch.load(args.query_path, map_location="cpu")
+        msg = model.load_state_dict(checkpoint, strict=False)
+        print(msg)
+        model = model.to(device)
+    preprocess = transforms.Compose([
+        transforms.Lambda(lambda x: Image.fromarray(x)),
+        transforms.Lambda(lambda x: x.resize((224, 224))),
+        transforms.Lambda(lambda x: vis_processors["eval"](x).unsqueeze(0).to(device)),
+    ])
+    dataset = MaximoDataset(args.datapath, preprocess, args.batch_size, shuffle=False)
+    caption = ["Question: Describe the action of the character in detail. Answer:"]
+    
+    features_image_origin = None
 
-query = torch.load("./LAVIS/saved/query_9_1.7022453546524048.pt", map_location=torch.device('cpu')).to(device)
+    if os.path.exists("./visualization"):
+        shutil.rmtree('./visualization')
+        # os.removedirs("./visualization")
+    os.mkdir("./visualization")
 
-for i in tqdm(range(len(motions))):
-    raw_image = np.load(os.path.join(datapath, motions[i]))
-    for index in range(raw_image.shape[1]):
-        images = []
-        for j in range(raw_image.shape[0]):
-            arr2im = Image.fromarray(raw_image[j, index, ...])
-            image = vis_processors["eval"](arr2im).unsqueeze(0).to(device)
-            images.append(image)
-        if len(images) == 1:
-            continue
-        images = torch.stack(images, dim=0).squeeze()
-        
+    for i in tqdm(range(len(dataset))):
+        data_list = dataset[i]
+        if i%100==0 and i>0:
+            features_image_origin = features_image_origin.numpy()
+            np.save("./visualization/features_image_origin_{}.npy".format(i), features_image_origin)
+            features_image_origin = None
+            exit(0)
+
         with torch.no_grad():
-            # originals
-            features_image = model.extract_features_diff({"image": images}, model.query_tokens.clone())
+            # origin query
+            features_image = model.extract_feature(data_list, caption*data_list["image"].shape[0])
             if features_image_origin is None:
                 features_image_origin = features_image.detach().cpu()
             else:
                 features_image_origin = torch.cat((features_image_origin, features_image.detach().cpu()), 0)
             # trained query
-            features_image = model.extract_features_diff({"image": images}, query)
-            if features_image_new is None:
-                features_image_new = features_image.detach().cpu()
-            else:
-                features_image_new = torch.cat((features_image_new, features_image.detach().cpu()), 0)
-            
-            if characterlabels is None:
-                characterlabels = torch.linspace(0, raw_image.shape[0]-1, raw_image.shape[0])
-            else:
-                characterlabels = torch.cat((characterlabels, torch.linspace(0, raw_image.shape[0]-1, raw_image.shape[0])), 0)
-            
-            if motionlabels is None:
-                motionlabels = torch.ones(raw_image.shape[0])*i
-            else:
-                motionlabels = torch.cat((motionlabels, torch.ones(raw_image.shape[0])*i), 0)
+            # features_image = model(data_list, torch.cat((query_tokens, query), dim=1))
+            # if features_image_new is None:
+            #     features_image_new = features_image.detach().cpu()
+            # else:
+            #     features_image_new = torch.cat((features_image_new, features_image.detach().cpu()), 0)
 
-features_image_origin = features_image_origin.view(features_image_origin.shape[0], -1).numpy()
-features_image_new = features_image_new.view(features_image_new.shape[0], -1).numpy()
-characterlabels = characterlabels.long().numpy()
-motionlabels = motionlabels.long().numpy()
-
-np.save("./LAVIS/features_image_origin.npy", features_image_origin)
-np.save("./LAVIS/features_image_new.npy", features_image_new)
-np.save("./LAVIS/characterlabels.npy", characterlabels)
-np.save("./LAVIS/motionlabels.npy", motionlabels)
-
-hyp.plot(features_image_origin, '.', reduce='TSNE', hue=characterlabels, ndims=2, save_path="./LAVIS/origin_character.png", show=False)
-hyp.plot(features_image_origin, '.', reduce='TSNE', hue=motionlabels, ndims=2, save_path="./LAVIS/origin_motion.png", show=False)
-hyp.plot(features_image_new, '.', reduce='TSNE', hue=characterlabels, ndims=2, save_path="./LAVIS/new_character.png", show=False)
-hyp.plot(features_image_new, '.', reduce='TSNE', hue=motionlabels, ndims=2, save_path="./LAVIS/new_motion.png", show=False)
-# hyp.plot(features_image_origin, '.', reduce='TSNE', hue=motionlabels, ndims=2)
+    features_image_origin = features_image_origin.numpy()
+    # features_image_new = features_image_new.numpy()
+    np.save("./visualization/features_image_origin_end.npy", features_image_origin)
+    # np.save("./visualization/features_image_new_end.npy", features_image_new)

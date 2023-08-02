@@ -160,3 +160,9 @@ saved
 runs
 *.npy
 events.*
+*.jpg
+*.txt
+*.mp4
+tmp
+*.png
+*.pt

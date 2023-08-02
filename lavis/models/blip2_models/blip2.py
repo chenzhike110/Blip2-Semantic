@@ -84,21 +84,98 @@ class Blip2Base(BaseModel):
 
     def load_from_pretrained(self, url_or_filename):
         from accelerate import load_checkpoint_and_dispatch
+        device_map = {
+            'query_tokens': 0,
+            'visual_encoder': 0, 
+            'ln_vision': 0, 
+            'Qformer': 0, 
+            't5_model': 'cpu',
+            # 't5_model.shared': 0, 
+            # 't5_model.lm_head': 0, 
+            # 't5_model.encoder.embed_tokens': 0, 
+            # 't5_model.decoder.embed_tokens':0,
+            # 't5_model.encoder.block.0': 0, 
+            # 't5_model.encoder.block.1': 0, 
+            # 't5_model.encoder.block.2': 0, 
+            # 't5_model.encoder.block.3': 0, 
+            # 't5_model.encoder.block.4': 0, 
+            # 't5_model.encoder.block.5': 0, 
+            # 't5_model.encoder.block.6': 1, 
+            # 't5_model.encoder.block.7': 1, 
+            # 't5_model.encoder.block.8': 1, 
+            # 't5_model.encoder.block.9': 1, 
+            # 't5_model.encoder.block.10': 1, 
+            # 't5_model.encoder.block.11': 1, 
+            # 't5_model.encoder.block.12': 1, 
+            # 't5_model.encoder.block.13': 1, 
+            # 't5_model.encoder.block.14': 1, 
+            # 't5_model.encoder.block.15': 1, 
+            # 't5_model.encoder.block.16': 1, 
+            # 't5_model.encoder.block.17': 1, 
+            # 't5_model.encoder.block.17.layer.1.DenseReluDense.wi_0': 1, 
+            # 't5_model.encoder.block.17.layer.1.DenseReluDense.wi_1': 2, 
+            # 't5_model.encoder.block.17.layer.1.DenseReluDense.wo': 2, 
+            # 't5_model.encoder.block.17.layer.1.DenseReluDense.dropout': 2, 
+            # 't5_model.encoder.block.17.layer.1.DenseReluDense.act': 2, 
+            # 't5_model.encoder.block.17.layer.1.layer_norm': 2, 
+            # 't5_model.encoder.block.17.layer.1.dropout': 2, 
+            # 't5_model.encoder.block.18': 2, 
+            # 't5_model.encoder.block.19': 2, 
+            # 't5_model.encoder.block.20': 2, 
+            # 't5_model.encoder.block.21': 2, 
+            # 't5_model.encoder.block.22': 2, 
+            # 't5_model.encoder.block.23': 2, 
+            # 't5_model.encoder.final_layer_norm': 2, 
+            # 't5_model.encoder.dropout': 2, 
+            # 't5_model.decoder.block.0': 2, 
+            # 't5_model.decoder.block.1': 2, 
+            # 't5_model.decoder.block.2': 2, 
+            # 't5_model.decoder.block.3': 2, 
+            # 't5_model.decoder.block.3.layer.1': 2, 
+            # 't5_model.decoder.block.3.layer.2': 'disk',
+            # 't5_model.decoder.block.4': 'cpu', 
+            # 't5_model.decoder.block.5': 'cpu', 
+            # 't5_model.decoder.block.6': 'cpu', 
+            # 't5_model.decoder.block.7': 'cpu', 
+            # 't5_model.decoder.block.8': 'cpu', 
+            # 't5_model.decoder.block.9': 'cpu', 
+            # 't5_model.decoder.block.10': 'cpu', 
+            # 't5_model.decoder.block.11': 'cpu', 
+            # 't5_model.decoder.block.12': 'cpu', 
+            # 't5_model.decoder.block.13': 'cpu', 
+            # 't5_model.decoder.block.14': 'cpu', 
+            # 't5_model.decoder.block.15': 'cpu', 
+            # 't5_model.decoder.block.16': 'cpu', 
+            # 't5_model.decoder.block.17': 'cpu', 
+            # 't5_model.decoder.block.18': 'cpu', 
+            # 't5_model.decoder.block.19': 'cpu', 
+            # 't5_model.decoder.block.20': 'cpu', 
+            # 't5_model.decoder.block.21': 'cpu', 
+            # 't5_model.decoder.block.22': 'cpu', 
+            # 't5_model.decoder.block.23': 'cpu', 
+            # 't5_model.decoder.final_layer_norm': 'cpu', 
+            # 't5_model.decoder.dropout': 'cpu', 
+            't5_proj': 'cpu', 
+            
+            }
+        max_memory = {i+1: torch.cuda.mem_get_info(i+1)[0] // 1.2 for i in range(torch.cuda.device_count()-1)}
+        max_memory.update({0: 0})
         if is_url(url_or_filename):
             cached_file = download_cached_file(
                 url_or_filename, check_hash=False, progress=True
             )
-            checkpoint = torch.load(cached_file, map_location="cpu")
-            # load_checkpoint_and_dispatch(self, checkpoint=cached_file, device_map="auto", no_split_module_classes=['Block'])
+            # checkpoint = torch.load(cached_file, map_location="cpu")
+            # device_map=device_map,
+            load_checkpoint_and_dispatch(self, checkpoint=cached_file, device_map='sequential', max_memory=max_memory, no_split_module_classes=['T5Block'], offload_folder="./tmp")
         elif os.path.isfile(url_or_filename):
-            checkpoint = torch.load(url_or_filename, map_location="cpu")
-            # load_checkpoint_and_dispatch(self, checkpoint=cached_file, device_map="auto", no_split_module_classes=['Block'])
+            # checkpoint = torch.load(url_or_filename, map_location="cpu")
+            load_checkpoint_and_dispatch(self, checkpoint=cached_file, device_map='sequential', max_memory=max_memory, no_split_module_classes=['T5Block'], offload_folder="./tmp")
         else:
             raise RuntimeError("checkpoint url or path is invalid")
 
-        state_dict = checkpoint["model"]
+        # state_dict = checkpoint["model"]
 
-        msg = self.load_state_dict(state_dict, strict=False)
+        # msg = self.load_state_dict(state_dict, strict=False)
 
         # logging.info("Missing keys {}".format(msg.missing_keys))
         logging.info("load checkpoint from %s" % url_or_filename)

@@ -16,8 +16,16 @@ def emb2indices(output, emb_layer):
 
 if __name__ == "__main__":
     device = torch.device("cuda") if torch.cuda.is_available() else "cpu"
-    text_query = torch.load("./saved/16042_textquery_17_0.31481030583381653.pt").to(device)
+    text_query = torch.load("./saved/7873_textquery_1_3.7207369804382324.pt").to(device)
     model, vis_processors, text_processors = load_model_and_preprocess(name="blip2_feature_extractor", model_type="pretrain_vitL", is_eval=True, device=device)
+    
+    caption = "Question: What is the character in the image doing? Answer:"
+    text = model.tokenizer(caption, return_tensors="pt", padding=True).to(device)
+    text_id = text.input_ids
+    text_query_origin = model.Qformer.bert.embeddings.word_embeddings(text_id.long().to(device))
+
+    print(torch.norm(text_query_origin-text_query))
+    
     layer = model.Qformer.bert.embeddings.word_embeddings
     indices = torch.zeros((text_query.size(1), 1))
     for i in range(indices.shape[0]):
